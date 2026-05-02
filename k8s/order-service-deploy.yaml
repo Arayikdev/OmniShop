@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: order-service
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: order-service
+  template:
+    metadata:
+      labels:
+        app: order-service
+    spec:
+      containers:
+        - name: order-service
+          image: omnishop/order-service:latest
+          imagePullPolicy: Never
+          envFrom:
+            - configMapRef:
+                name: omnishop-config
+            - secretRef:
+                name: omnishop-secrets
+          env:
+            - name: DB_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: omnishop-config
+                  key: SHARED_DB_URL
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              valueFrom:
+                configMapKeyRef:
+                  name: omnishop-config
+                  key: KAFKA_BOOTSTRAP
+          ports:
+            - containerPort: 8083
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8083
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 10
+          resources:
+            requests:
+              memory: 256Mi
+              cpu: 100m
+            limits:
+              memory: 512Mi
+              cpu: 500m
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: order-service
+  namespace: default
+spec:
+  type: ClusterIP
+  selector:
+    app: order-service
+  ports:
+    - port: 8083
+      targetPort: 8083

@@ -1,0 +1,76 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pgdata-shared
+  namespace: default
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres-shared
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres-shared
+  template:
+    metadata:
+      labels:
+        app: postgres-shared
+    spec:
+      containers:
+        - name: postgres-shared
+          image: postgres:16
+          env:
+            - name: POSTGRES_DB
+              value: shared_db
+            - name: POSTGRES_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: omnishop-config
+                  key: DB_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: omnishop-secrets
+                  key: DB_PASS
+          ports:
+            - containerPort: 5432
+          volumeMounts:
+            - name: postgres-shared-storage
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - postgres
+                - -d
+                - shared_db
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 10
+      volumes:
+        - name: postgres-shared-storage
+          persistentVolumeClaim:
+            claimName: pgdata-shared
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-shared
+  namespace: default
+spec:
+  type: ClusterIP
+  selector:
+    app: postgres-shared
+  ports:
+    - port: 5432
+      targetPort: 5432

@@ -1,0 +1,97 @@
+server:
+  port: 8080
+spring:
+  cloud:
+    gateway:
+      routes:
+        - id: auth-service
+          uri: http://${AUTH_HOST:localhost}:8081
+          predicates:
+            - Path=/auth/**
+
+        - id: product-quantity
+          uri: http://${PRODUCT_HOST:localhost}:8082
+          predicates:
+            - Path=/products/*/quantity,/products/*/quantity/add
+            - Method=GET,PUT,PATCH
+          filters:
+            - name: JwtAuthFilter
+
+        - id: product-get
+          uri: http://${PRODUCT_HOST:localhost}:8082
+          predicates:
+            - Path=/products/**
+            - Method=GET
+
+        - id: product-write
+          uri: http://${PRODUCT_HOST:localhost}:8082
+          predicates:
+            - Path=/products/**
+            - Method=POST,PUT,DELETE,PATCH
+          filters:
+            - name: JwtAuthFilter
+
+        - id: cart-service
+          uri: http://${ORDER_HOST:localhost}:8083
+          predicates:
+            - Path=/cart/**
+          filters:
+            - name: JwtAuthFilter
+
+        - id: order-service
+          uri: http://${ORDER_HOST:localhost}:8083
+          predicates:
+            - Path=/orders/**
+          filters:
+            - name: JwtAuthFilter
+
+        - id: auth-api-docs
+          uri: http://${AUTH_HOST:localhost}:8081
+          predicates:
+            - Path=/auth-service/api-docs
+          filters:
+            - RewritePath=/auth-service/api-docs, /api-docs
+
+        - id: product-api-docs
+          uri: http://${PRODUCT_HOST:localhost}:8082
+          predicates:
+            - Path=/product-service/api-docs
+          filters:
+            - RewritePath=/product-service/api-docs, /api-docs
+
+        - id: order-api-docs
+          uri: http://${ORDER_HOST:localhost}:8083
+          predicates:
+            - Path=/order-service/api-docs
+          filters:
+            - RewritePath=/order-service/api-docs, /api-docs
+
+      httpclient:
+        max-header-size: 1MB
+  codec:
+    max-in-memory-size: 1MB
+
+app:
+  jwt:
+    secret: ${JWT_SECRET:CHANGE_ME_USE_MIN_32_CHARS}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+springdoc:
+  api-docs:
+    path: /api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    urls:
+      - name: Auth Service
+        url: /auth-service/api-docs
+      - name: Product Service
+        url: /product-service/api-docs
+      - name: Order Service
+        url: /order-service/api-docs
+    server-side-render: true
+  webjars:
+    prefix: ""

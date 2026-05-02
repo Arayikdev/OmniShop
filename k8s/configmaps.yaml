@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: omnishop-config
+  namespace: default
+data:
+  DB_USER: postgres
+  DB_HOST_AUTH: postgres-auth-service
+  DB_HOST_SHARED: postgres-shared
+  KAFKA_BOOTSTRAP: kafka-service:9092
+  AUTH_HOST: auth-service
+  PRODUCT_HOST: product-service
+  ORDER_HOST: order-service
+  SHARED_DB_URL: jdbc:postgresql://postgres-shared:5432/shared_db
+  AUTH_DB_URL: jdbc:postgresql://postgres-auth-service:5432/auth_db

@@ -36,6 +36,23 @@ services:
       timeout: 5s
       retries: 10
 
+  postgres-notification:
+    image: postgres:16
+    container_name: omnishop-postgres-notification
+    environment:
+      POSTGRES_DB: notification_db
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASS}
+    ports:
+      - "5436:5432"
+    volumes:
+      - pgdata-notification:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d notification_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   kafka:
     image: apache/kafka:3.7.0
     container_name: omnishop-kafka
@@ -148,13 +165,13 @@ services:
       - "8084:8084"
     environment:
       KAFKA_BOOTSTRAP_SERVERS: omnishop-kafka:9092
-      DB_URL_NOTIFICATION: jdbc:postgresql://postgres-shared:5432/shared_db
+      DB_URL_NOTIFICATION: jdbc:postgresql://postgres-notification:5432/notification_db
       DB_USER: ${DB_USER}
       DB_PASS: ${DB_PASS}
     depends_on:
-      kafka:
+      postgres-notification:
         condition: service_healthy
-      postgres-shared:
+      kafka:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8084/actuator/health"]
@@ -205,3 +222,4 @@ services:
 volumes:
   pgdata-auth:
   pgdata-shared:
+  pgdata-notification:

@@ -27,7 +27,7 @@ spec:
               valueFrom:
                 configMapKeyRef:
                   name: omnishop-config
-                  key: SHARED_DB_URL
+                  key: NOTIFICATION_DB_URL
             - name: DB_USER
               valueFrom:
                 configMapKeyRef:

@@ -13,3 +13,4 @@ data:
   ORDER_HOST: order-service
   SHARED_DB_URL: jdbc:postgresql://postgres-shared:5432/shared_db
   AUTH_DB_URL: jdbc:postgresql://postgres-auth-service:5432/auth_db
+  NOTIFICATION_DB_URL: jdbc:postgresql://postgres-notification-service:5432/notification_db

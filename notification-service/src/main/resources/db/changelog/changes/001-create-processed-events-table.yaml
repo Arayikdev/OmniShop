@@ -1,0 +1,19 @@
+databaseChangeLog:
+  - changeSet:
+      id: 001-create-processed-events-table
+      author: omnishop
+      changes:
+        - createTable:
+            tableName: processed_events
+            columns:
+              - column:
+                  name: event_id
+                  type: UUID
+                  constraints:
+                    primaryKey: true
+                    nullable: false
+              - column:
+                  name: processed_at
+                  type: TIMESTAMP
+                  constraints:
+                    nullable: false

@@ -23,6 +23,21 @@ spec:
                 configMapKeyRef:
                   name: omnishop-config
                   key: KAFKA_BOOTSTRAP
+            - name: DB_URL_NOTIFICATION
+              valueFrom:
+                configMapKeyRef:
+                  name: omnishop-config
+                  key: SHARED_DB_URL
+            - name: DB_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: omnishop-config
+                  key: DB_USER
+            - name: DB_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: omnishop-secrets
+                  key: DB_PASS
           ports:
             - containerPort: 8084
           readinessProbe:

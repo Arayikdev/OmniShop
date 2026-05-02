@@ -4,16 +4,16 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.omnishop.notificationservice.dto.OrderConfirmedEvent;
 import com.omnishop.notificationservice.dto.OrderDeliveredEvent;
+import com.omnishop.notificationservice.entity.ProcessedEvent;
+import com.omnishop.notificationservice.repository.ProcessedEventRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.messaging.handler.annotation.Payload;
 import org.springframework.stereotype.Component;
 
-import java.util.Collections;
-import java.util.HashSet;
+import java.time.LocalDateTime;
 import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
 
 @Slf4j
@@ -23,7 +23,11 @@ public class OrderEventConsumer {
     @Autowired
     private ObjectMapper objectMapper;
 
-    private final Set<UUID> processedEventIds = Collections.synchronizedSet(new HashSet<>());
+    private final ProcessedEventRepository processedEventRepository;
+
+    public OrderEventConsumer(ProcessedEventRepository processedEventRepository) {
+        this.processedEventRepository = processedEventRepository;
+    }
 
     @KafkaListener(
             topics = "order-events",
@@ -38,10 +42,11 @@ public class OrderEventConsumer {
             switch (eventType) {
                 case "CONFIRMED" -> {
                     OrderConfirmedEvent event = objectMapper.readValue(payload, OrderConfirmedEvent.class);
-                    if (!processedEventIds.add(event.eventId())) {
+                    if (processedEventRepository.existsById(event.eventId())) {
                         log.warn("Duplicate event ignored: {}", event.eventId());
                         return;
                     }
+                    processedEventRepository.save(new ProcessedEvent(event.eventId(), LocalDateTime.now()));
                     log.info("ORDER CONFIRMED - orderId: {}, customer: {}, total: {}",
                             event.orderId(), event.customerId(), event.totalAmount());
                     log.info("Sending confirmation email to customer: {}", event.customerId());
@@ -49,10 +54,11 @@ public class OrderEventConsumer {
                 }
                 case "DELIVERED" -> {
                     OrderDeliveredEvent event = objectMapper.readValue(payload, OrderDeliveredEvent.class);
-                    if (!processedEventIds.add(event.eventId())) {
+                    if (processedEventRepository.existsById(event.eventId())) {
                         log.warn("Duplicate event ignored: {}", event.eventId());
                         return;
                     }
+                    processedEventRepository.save(new ProcessedEvent(event.eventId(), LocalDateTime.now()));
                     log.info("Order DELIVERED - sending delivery confirmation to customer: {}",
                             event.customerId());
                     log.info("ORDER DELIVERED - orderId: {}, estimatedDelivery: {}",

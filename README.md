@@ -69,13 +69,14 @@ graph TB
             AUTH["Auth Service :8081<br/>auth_db"]
             PRODUCT["Product Service :8082<br/>shared_db"]
             ORDER["Order Service :8083<br/>shared_db"]
-            NOTIFY["Notification Service :8084"]
+            NOTIFY["Notification Service :8084<br/>notification_db"]
         end
 
         subgraph Infrastructure
             KAFKA[("Apache Kafka<br/>order-events topic")]
             PGAUTH[("PostgreSQL<br/>auth_db")]
             PGSHARED[("PostgreSQL<br/>shared_db")]
+            PGNOTIFICATION[("PostgreSQL<br/>notification_db")]
         end
     end
 
@@ -86,8 +87,9 @@ graph TB
     AUTH --> PGAUTH
     PRODUCT --> PGSHARED
     ORDER --> PGSHARED
-    ORDER -->|OrderConfirmedEvent<br/>OrderCancelledEvent<br/>OrderShippedEvent| KAFKA
+    ORDER -->|OrderConfirmedEvent<br/>OrderDeliveredEvent| KAFKA
     KAFKA -->|notification-order-consumer| NOTIFY
+    NOTIFY --> PGNOTIFICATION
 ```
 
 ```mermaid

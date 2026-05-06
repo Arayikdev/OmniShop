@@ -40,18 +40,18 @@ A microservices-based online shopping system built with Spring Boot 3.5, Postgre
                           │  └──┬───┘ └────┬────┘ └───┬───┘ └──────┬───────┘       │
                           │     │          │           │            │               │
                           │     ▼          ▼           ▼            │               │
-                          │  ┌──────┐ ┌──────────────────────┐      │               │
-                          │  │ PG   │ │          PG          │      │               │
-                          │  │:5433 │ │        :5435         │      │               │
-                          │  │auth  │ │       shared         │      │               │
-                          │  └──────┘ └──────────────────────┘      │               │
+                          │  ┌──────┐ ┌──────────────────────┐ ┌──────────────┐    │
+                          │  │ PG   │ │          PG          │ │      PG      │    │
+                          │  │:5433 │ │        :5435         │ │    :5436     │    │
+                          │  │auth  │ │       shared         │ │notification  │    │
+                          │  └──────┘ └──────────────────────┘ └──────────────┘    │
                           │                                          │               │
                           │   Kafka Topics (KRaft, no ZooKeeper)     │               │
                           │                                          │               │
                           │   order-service ──[order-events]──▶ notification-service│
                           │                        topic carries:                    │
-                          │                        • OrderPlacedEvent                │
-                          │                        • OrderCancelledEvent             │
+                          │                        • OrderConfirmedEvent             │
+                          │                        • OrderDeliveredEvent             │
                           │                                                          │
                           └─────────────────────────────────────────────────────────┘
 
@@ -119,10 +119,11 @@ graph TB
     subgraph Databases["Databases (PostgreSQL)"]
         AuthDB[("auth_db :5433<br/>users")]
         SharedDB[("shared_db :5435<br/>products, orders<br/>cart_items, order_items<br/>shedlock")]
+        NotifDB[("notification_db :5436<br/>processed_events")]
     end
 
     subgraph Messaging["Apache Kafka (KRaft)"]
-        OE["order-events<br/>OrderPlacedEvent<br/>OrderCancelledEvent"]
+        OE["order-events<br/>OrderConfirmedEvent<br/>OrderDeliveredEvent"]
     end
 
     subgraph Observability["Observability"]
@@ -137,12 +138,13 @@ graph TB
     GW -->|"POST/PUT/DELETE/PATCH /products/**<br/>JWT required"| PS
     GW -->|"/cart/** /orders/**<br/>JWT required"| OS
 
-    OS -->|"OrderPlacedEvent<br/>OrderCancelledEvent"| OE
+    OS -->|"OrderConfirmedEvent<br/>OrderDeliveredEvent"| OE
     OE -->|"consume"| NS
 
     AS --- AuthDB
     PS --- SharedDB
     OS --- SharedDB
+    NS --- NotifDB
 
     PROM -->|"scrape /actuator/prometheus"| GW
     PROM -->|"scrape"| AS
@@ -160,6 +162,7 @@ graph TB
     style NS fill:#009688,color:#fff
     style AuthDB fill:#607D8B,color:#fff
     style SharedDB fill:#607D8B,color:#fff
+    style NotifDB fill:#607D8B,color:#fff
     style OE fill:#795548,color:#fff
     style PROM fill:#E91E63,color:#fff
     style KUI fill:#3F51B5,color:#fff
@@ -401,32 +404,19 @@ Three event types are published to this topic, each carrying a `"type"` discrimi
 }
 ```
 
-#### OrderCancelledEvent — published when a customer cancels an order
+#### OrderDeliveredEvent — published when order transitions to DELIVERED
 
 ```json
 {
-  "type": "CANCELLED",
-  "eventId": "c56a4180-65aa-42ec-a945-5fd21dec0538",
-  "orderId": "7c9e6679-7b5b-4f85-9c4e-9f3df5f5a4a1",
-  "customerId": "3fa85f64-...",
-  "reason": "Cancelled by customer",
-  "cancelledAt": "2026-04-30T10:05:00"
-}
-```
-
-#### OrderShippedEvent — published by the delivery scheduler when an order transitions to SHIPPED
-
-```json
-{
-  "type": "SHIPPED",
-  "eventId": "b4e3d1c0-...",
+  "type": "DELIVERED",
+  "eventId": "d67b2190-65aa-42ec-a945-5fd21dec0538",
   "orderId": "7c9e6679-7b5b-4f85-9c4e-9f3df5f5a4a1",
   "customerId": "3fa85f64-...",
   "estimatedDelivery": "2026-04-30T10:10:00"
 }
 ```
 
-> notification-service uses a single `@KafkaListener` that deserializes the raw JSON string and dispatches by `type` field. Duplicate events are suppressed via an in-memory `processedEventIds` set.
+> notification-service uses a single `@KafkaListener` that deserializes the raw JSON string and dispatches by `type` field. Duplicate events are suppressed via a PostgreSQL-backed `processed_events` table in `notification_db` — idempotency survives service restarts.
 
 ---
 
@@ -468,13 +458,12 @@ Order placed (checkout)
       │
       │ DeliveryScheduler runs every 30 s
       │ Advances orders where PREPARING and updatedAt > 1 min ago
-      │ publishes OrderShippedEvent to order-events
       ▼
  deliveryStatus=SHIPPED
- estimatedDelivery = now + 1–5 minutes
       │
       │ DeliveryScheduler runs every 30 s
       │ Advances orders where SHIPPED and estimatedDelivery has passed
+      │ publishes OrderDeliveredEvent to order-events
       ▼
  deliveryStatus=DELIVERED
 ```
@@ -492,7 +481,7 @@ Order placed (checkout)
 
 | Job | Schedule | Description |
 |---|---|---|
-| `DeliveryScheduler` | Every 30 s | Advances PREPARING → SHIPPED and SHIPPED → DELIVERED; publishes `OrderShippedEvent` on each transition |
+| `DeliveryScheduler` | Every 30 s | Advances PREPARING → SHIPPED (no event) and SHIPPED → DELIVERED; publishes `OrderDeliveredEvent` on DELIVERED transition. Protected by ShedLock — prevents duplicate runs across replicas |
 | `CartCleanupJob` | Daily at 03:00 | Deletes cart items not updated in the last 7 days. Protected by ShedLock. |
 
 ---
@@ -501,14 +490,16 @@ Order placed (checkout)
 
 | Variable | Service(s) | Default | Description |
 |---|---|---|---|
-| `DB_USER` | auth, product, order | `postgres` | PostgreSQL username |
+| `DB_USER` | auth, product, order, notification | `postgres` | PostgreSQL username |
 | `DB_PASS` | auth, product, order | `postgres` | PostgreSQL password |
+| `DB_PASS` | notification-service | `postgres` | PostgreSQL password for notification_db |
 | `JWT_SECRET` | auth-service, api-gateway | `superSecretKey123OfAtLeast32Characters` | HMAC-SHA256 signing key. Must be identical in both services. Minimum 32 characters. |
 | `KAFKA_BOOTSTRAP_SERVERS` | order-service, notification-service | `localhost:9092` | Kafka bootstrap server address. In Docker: `omnishop-kafka:9092` |
 | `PRODUCT_HOST` | api-gateway | `localhost` | Hostname for product-service routing |
 | `AUTH_HOST` | api-gateway | `localhost` | Hostname for auth-service routing |
 | `ORDER_HOST` | api-gateway | `localhost` | Hostname for order-service routing |
 | `DB_URL` | auth, product, order | _(none)_ | Full JDBC URL override used by Docker Compose to point each service at its container's port 5432 |
+| `DB_URL_NOTIFICATION` | notification-service | `jdbc:postgresql://localhost:5436/notification_db` | JDBC URL for notification_db |
 
 ### Local development defaults (without Docker)
 
@@ -517,12 +508,7 @@ Order placed (checkout)
 | auth-service | `jdbc:postgresql://localhost:5433/auth_db` |
 | product-service | `jdbc:postgresql://localhost:5435/shared_db` |
 | order-service | `jdbc:postgresql://localhost:5435/shared_db` |
-
-Start the infrastructure only (no app containers) for local dev:
-
-```bash
-docker-compose -f docker-compose.infra.yml up -d
-```
+| notification-service | `jdbc:postgresql://localhost:5436/notification_db` |
 
 ---
 
@@ -535,13 +521,14 @@ The `k8s/` directory contains manifests for deploying the full stack on a Kubern
 | File | Resources |
 |---|---|
 | `secrets.yaml` | `omnishop-secrets` (DB_PASS, JWT_SECRET) |
-| `configmaps.yaml` | `omnishop-config` (DB_USER, hostnames, Kafka address, SHARED_DB_URL) |
+| `configmaps.yaml` | `omnishop-config` (DB_USER, hostnames, Kafka address, SHARED_DB_URL, NOTIFICATION_DB_URL) |
 | `postgres-auth-deploy.yaml` | PVC + Deployment + ClusterIP Service for auth DB (:5433) |
 | `postgres-shared-deploy.yaml` | PVC + Deployment + ClusterIP Service for shared DB (:5435) |
+| `postgres-notification-deploy.yaml` | PVC + Deployment + ClusterIP Service for notification DB (:5436) |
 | `kafka-deploy.yaml` | KRaft Kafka Deployment + ClusterIP Service (`kafka-service:9092`) |
 | `auth-deploy.yaml` | Deployment (1 replica) + ClusterIP Service |
-| `product-service-deploy.yaml` | Deployment (1 replica) + ClusterIP Service |
-| `order-deploy.yaml` | Deployment (1 replica, required by ShedLock) + ClusterIP Service |
+| `product-service-deploy.yaml` | Deployment (2 replicas, stateless) + ClusterIP Service |
+| `order-service-deploy.yaml` | Deployment (1 replica) + ClusterIP Service |
 | `notification-service-deploy.yaml` | Deployment (1 replica) + ClusterIP Service |
 | `gateway-deploy.yaml` | Deployment (1 replica) + **LoadBalancer** Service (port 80 → 8080) |
 
@@ -578,7 +565,7 @@ echo -n 'your-jwt-secret-min-32-chars' | base64
 
 ### Scale product-service
 
-product-service is a stateless read-heavy service. It supports horizontal scaling:
+product-service is a stateless service. It supports horizontal scaling:
 
 ```bash
 kubectl scale deployment product-service --replicas=3
